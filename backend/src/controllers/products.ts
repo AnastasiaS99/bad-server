@@ -7,25 +7,31 @@ import ConflictError from '../errors/conflict-error'
 import NotFoundError from '../errors/not-found-error'
 import Product from '../models/product'
 import movingFile from '../utils/movingFile'
+import normalizeLimit from '../utils/normalizeLimit'
+import { sanitize } from '../utils/sanitize'
 
 // GET /product
 const getProducts = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { page = 1, limit = 5 } = req.query
+        const { page = 1 } = req.query
+        const limit = normalizeLimit(req.query.limit) 
+        
         const options = {
-            skip: (Number(page) - 1) * Number(limit),
-            limit: Number(limit),
+            skip: (Number(page) - 1) * limit,
+            limit,
         }
+        
         const products = await Product.find({}, null, options)
         const totalProducts = await Product.countDocuments({})
-        const totalPages = Math.ceil(totalProducts / Number(limit))
+        const totalPages = Math.ceil(totalProducts / limit)
+        
         return res.send({
             items: products,
             pagination: {
                 totalProducts,
                 totalPages,
                 currentPage: Number(page),
-                pageSize: Number(limit),
+                pageSize: limit,
             },
         })
     } catch (err) {
@@ -52,11 +58,11 @@ const createProduct = async (
         }
 
         const product = await Product.create({
-            description,
+            description: sanitize(description),
             image,
-            category,
+            category: sanitize(category),
             price,
-            title,
+            title: sanitize(title),
         })
         return res.status(constants.HTTP_STATUS_CREATED).send(product)
     } catch (error) {
@@ -81,7 +87,7 @@ const updateProduct = async (
 ) => {
     try {
         const { productId } = req.params
-        const { image } = req.body
+        const { title, description, category, price, image } = req.body
 
         // Переносим картинку из временной папки
         if (image) {
@@ -92,15 +98,18 @@ const updateProduct = async (
             )
         }
 
+        const updateData: any = {}
+        
+        // Условное добавление полей
+        if (title !== undefined) updateData.title = sanitize(title)
+        if (description !== undefined) updateData.description = sanitize(description)
+        if (category !== undefined) updateData.category = sanitize(category)
+        if (price !== undefined) updateData.price = price
+        if (image !== undefined) updateData.image = image
+
         const product = await Product.findByIdAndUpdate(
             productId,
-            {
-                $set: {
-                    ...req.body,
-                    price: req.body.price ? req.body.price : null,
-                    image: req.body.image ? req.body.image : undefined,
-                },
-            },
+            { $set: updateData },
             { runValidators: true, new: true }
         ).orFail(() => new NotFoundError('Нет товара по заданному id'))
         return res.send(product)

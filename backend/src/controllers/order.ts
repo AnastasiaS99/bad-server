@@ -5,6 +5,8 @@ import NotFoundError from '../errors/not-found-error'
 import Order, { IOrder } from '../models/order'
 import Product, { IProduct } from '../models/product'
 import User from '../models/user'
+import { escapeRegex } from '../utils/escapeRegex'
+import { sanitize } from '../utils/sanitize'
 
 // eslint-disable-next-line max-len
 // GET /orders?page=2&limit=5&sort=totalAmount&order=desc&orderDateFrom=2024-07-01&orderDateTo=2024-08-01&status=delivering&totalAmountFrom=100&totalAmountTo=1000&search=%2B1
@@ -27,16 +29,21 @@ export const getOrders = async (
             orderDateTo,
             search,
         } = req.query
+        const normalizedLimit = Math.min(Number(limit) || 10, 10)
+        const normalizedPage = Math.max(Number(page) || 1, 1)
 
         const filters: FilterQuery<Partial<IOrder>> = {}
 
-        if (status) {
-            if (typeof status === 'object') {
-                Object.assign(filters, status)
-            }
-            if (typeof status === 'string') {
-                filters.status = status
-            }
+        if (typeof status === 'string') {
+            filters.status = status
+        }
+
+        if (status && typeof status !== 'string') {
+            return next(new BadRequestError('Некорректный статус заказа'))
+        }
+
+        if (search && typeof search !== 'string') {
+            return next(new BadRequestError('Некорректный параметр поиска'))
         }
 
         if (totalAmountFrom) {
@@ -89,8 +96,8 @@ export const getOrders = async (
             { $unwind: '$products' },
         ]
 
-        if (search) {
-            const searchRegex = new RegExp(search as string, 'i')
+        if (typeof search === 'string' && search) {
+            const searchRegex = new RegExp(escapeRegex(search), 'i')
             const searchNumber = Number(search)
 
             const searchConditions: any[] = [{ 'products.title': searchRegex }]
@@ -116,8 +123,8 @@ export const getOrders = async (
 
         aggregatePipeline.push(
             { $sort: sort },
-            { $skip: (Number(page) - 1) * Number(limit) },
-            { $limit: Number(limit) },
+            { $skip: (normalizedPage - 1) * normalizedLimit },
+            { $limit: normalizedLimit },
             {
                 $group: {
                     _id: '$_id',
@@ -133,15 +140,15 @@ export const getOrders = async (
 
         const orders = await Order.aggregate(aggregatePipeline)
         const totalOrders = await Order.countDocuments(filters)
-        const totalPages = Math.ceil(totalOrders / Number(limit))
+        const totalPages = Math.ceil(totalOrders / normalizedLimit)
 
         res.status(200).json({
             orders,
             pagination: {
                 totalOrders,
                 totalPages,
-                currentPage: Number(page),
-                pageSize: Number(limit),
+                currentPage: normalizedPage,
+                pageSize: normalizedLimit,
             },
         })
     } catch (error) {
@@ -157,9 +164,11 @@ export const getOrdersCurrentUser = async (
     try {
         const userId = res.locals.user._id
         const { search, page = 1, limit = 5 } = req.query
+        const normalizedLimit = Math.min(Number(limit) || 5, 10)
+        const normalizedPage = Math.max(Number(page) || 1, 1)
         const options = {
-            skip: (Number(page) - 1) * Number(limit),
-            limit: Number(limit),
+            skip: (normalizedPage - 1) * normalizedLimit,
+            limit: normalizedLimit,
         }
 
         const user = await User.findById(userId)
@@ -183,19 +192,16 @@ export const getOrdersCurrentUser = async (
 
         let orders = user.orders as unknown as IOrder[]
 
-        if (search) {
-            // если не экранировать то получаем Invalid regular expression: /+1/i: Nothing to repeat
-            const searchRegex = new RegExp(search as string, 'i')
+        if (typeof search === 'string' && search) {
+            const searchRegex = new RegExp(escapeRegex(search), 'i')
             const searchNumber = Number(search)
             const products = await Product.find({ title: searchRegex })
             const productIds = products.map((product) => product._id)
 
             orders = orders.filter((order) => {
-                // eslint-disable-next-line max-len
                 const matchesProductTitle = order.products.some((product) =>
                     productIds.some((id) => id.equals(product._id))
                 )
-                // eslint-disable-next-line max-len
                 const matchesOrderNumber =
                     !Number.isNaN(searchNumber) &&
                     order.orderNumber === searchNumber
@@ -205,7 +211,7 @@ export const getOrdersCurrentUser = async (
         }
 
         const totalOrders = orders.length
-        const totalPages = Math.ceil(totalOrders / Number(limit))
+        const totalPages = Math.ceil(totalOrders / normalizedLimit)
 
         orders = orders.slice(options.skip, options.skip + options.limit)
 
@@ -214,8 +220,8 @@ export const getOrdersCurrentUser = async (
             pagination: {
                 totalOrders,
                 totalPages,
-                currentPage: Number(page),
-                pageSize: Number(limit),
+                currentPage: normalizedPage,
+                pageSize: normalizedLimit,
             },
         })
     } catch (error) {
@@ -313,11 +319,11 @@ export const createOrder = async (
             totalAmount: total,
             products: items,
             payment,
-            phone,
-            email,
-            comment,
+            phone: sanitize(phone),
+            email: sanitize(email),
+            comment: comment ? sanitize(comment) : undefined,
             customer: userId,
-            deliveryAddress: address,
+            deliveryAddress: sanitize(address),
         })
         const populateOrder = await newOrder.populate(['customer', 'products'])
         await populateOrder.save()

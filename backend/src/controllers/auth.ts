@@ -9,7 +9,7 @@ import ConflictError from '../errors/conflict-error'
 import NotFoundError from '../errors/not-found-error'
 import UnauthorizedError from '../errors/unauthorized-error'
 import User from '../models/user'
-
+// Вход пользователя
 // POST /auth/login
 const login = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -31,7 +31,7 @@ const login = async (req: Request, res: Response, next: NextFunction) => {
         return next(err)
     }
 }
-
+// Регистрация пользователя
 // POST /auth/register
 const register = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -63,7 +63,7 @@ const register = async (req: Request, res: Response, next: NextFunction) => {
         return next(error)
     }
 }
-
+// Получение текущего пользователя
 // GET /auth/user
 const getCurrentUser = async (
     _req: Request,
@@ -83,7 +83,7 @@ const getCurrentUser = async (
         next(error)
     }
 }
-
+// Вспомогательная функция
 // Можно лучше: вынести общую логику получения данных из refresh токена
 const deleteRefreshTokenInUser = async (
     req: Request,
@@ -116,7 +116,7 @@ const deleteRefreshTokenInUser = async (
 
     return user
 }
-
+// Выход пользователя
 // Реализация удаления токена из базы может отличаться
 // GET  /auth/logout
 const logout = async (req: Request, res: Response, next: NextFunction) => {
@@ -134,7 +134,7 @@ const logout = async (req: Request, res: Response, next: NextFunction) => {
         next(error)
     }
 }
-
+// Обновление токена
 // GET  /auth/token
 const refreshAccessToken = async (
     req: Request,
@@ -163,7 +163,7 @@ const refreshAccessToken = async (
         return next(error)
     }
 }
-
+// Получение ролей пользователя
 const getCurrentUserRoles = async (
     req: Request,
     res: Response,
@@ -184,17 +184,29 @@ const getCurrentUserRoles = async (
         next(error)
     }
 }
-
+// Обновление данных пользователя
 const updateCurrentUser = async (
     req: Request,
     res: Response,
     next: NextFunction
 ) => {
     const userId = res.locals.user._id
+    const { name, email } = req.body
+    
+    // Оставляем только разрешенные поля
+    const updateFields: any = {}
+    if (name !== undefined) updateFields.name = name
+    if (email !== undefined) updateFields.email = email
+    
     try {
-        const updatedUser = await User.findByIdAndUpdate(userId, req.body, {
-            new: true,
-        }).orFail(
+        const updatedUser = await User.findByIdAndUpdate(
+            userId,
+            { $set: updateFields },
+            {
+                new: true,
+                runValidators: true,
+            }
+        ).orFail(
             () =>
                 new NotFoundError(
                     'Пользователь по заданному id отсутствует в базе'
@@ -202,6 +214,14 @@ const updateCurrentUser = async (
         )
         res.status(200).json(updatedUser)
     } catch (error) {
+        if (error instanceof MongooseError.ValidationError) {
+            return next(new BadRequestError(error.message))
+        }
+        if (error instanceof Error && error.message.includes('E11000')) {
+            return next(
+                new ConflictError('Пользователь с таким email уже существует')
+            )
+        }
         next(error)
     }
 }
