@@ -6,5 +6,5 @@ class BadRequestError extends Error {
         this.statusCode = 400
     }
 }
-// Коммит
+
 export default BadRequestError
